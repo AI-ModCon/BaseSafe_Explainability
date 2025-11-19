@@ -24,6 +24,18 @@ jupyter>=1.0.0,<2.0.0
 ipykernel>=6.0.0,<7.0.0
 ipywidgets>=8.0.0,<9.0.0
 
+# PyTorch ecosystem (for Captum GradientSHAP example)
+torch>=2.0.0,<3.0.0
+torchvision>=0.15.0,<1.0.0
+captum>=0.6.0,<1.0.0
+
+# Hugging Face transformers for pretrained models
+transformers>=4.30.0,<5.0.0
+
+# Additional dependencies for image processing
+Pillow>=9.0.0,<11.0.0
+requests>=2.28.0,<3.0.0
+
 # Optional: Enhanced visualization
 seaborn>=0.12.0,<1.0.0
 

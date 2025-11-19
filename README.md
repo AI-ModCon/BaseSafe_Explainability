@@ -2,16 +2,17 @@
 
 This directory contains a comprehensive electricity consumption prediction analysis with SHAP explanations. The main analysis is in the Jupyter notebook `electricity_consumption_shap.ipynb`.
 
-## 🎯 Main Features
+## Main Features
 
 - **Time-series electricity consumption prediction** with 96.4% R² accuracy
 - **SHAP explanations** for model interpretability and individual prediction analysis
+- **Captum GradientSHAP** for deep learning model explanations with Hugging Face ViT and TorchVision ResNet18
 - **Alternative feature analysis** for Python 3.14+ compatibility
 - **Advanced feature engineering** with 29+ temporal features including lags, rolling statistics, and cyclical encodings
 - **Multiple ML models** comparison (Random Forest, Gradient Boosting, Linear Regression)
 - **Interactive visualizations** including waterfall plots, summary plots, and correlation analysis
 
-## 🔧 Quick Setup (New Users)
+## Quick Setup (New Users)
 
 The fastest way to get started is using the provided `requirements.txt` file:
 
@@ -33,12 +34,60 @@ jupyter notebook electricity_consumption_shap.ipynb
 
 **That's it!** The notebook will automatically detect SHAP availability and provide the appropriate analysis.
 
-## 📊 Quick Results
+## Repository Contents
+
+### **electricity_consumption_shap.ipynb**
+Complete time-series electricity consumption analysis with SHAP explanations:
+- Synthetic data generation with realistic patterns
+- Advanced feature engineering (29+ features)
+- Multiple ML model training and comparison
+- SHAP explanations and visualizations
+- Alternative analysis for Python 3.14+ compatibility
+
+### **captum_gradientshap_example.ipynb**
+Deep learning model explanations using Captum's GradientSHAP with multiple model options:
+- **Hugging Face Vision Transformer (ViT)**: `google/vit-base-patch16-224` model with 86M parameters
+- **TorchVision ResNet18**: Traditional CNN with 11M parameters  
+- **Flexible model switching**: Change `MODEL_TYPE` variable to switch between models
+- **GradientSHAP attributions** for pixel-level explanations on both architectures
+- **Comparison with other attribution methods** (Saliency, Integrated Gradients)
+- **Automatic preprocessing** using Hugging Face processors or torchvision transforms
+- Comprehensive visualizations and quantitative analysis
+- **Materials-focused datasets**: Local workflow with brick textures and metal surfaces for materials science analysis
+
+#### Materials Images: Local Datasets Workflow
+This notebook now focuses on materials-oriented images (e.g., brick textures, metal surfaces) and a simplified, reliable local-dataset workflow. Medical/biomedical dataset code has been removed.
+
+Quick steps inside the notebook:
+- In the configuration cell:
+  - Set `DATA_SOURCE = 'dataset'`
+  - Set `DATASET_TYPE = 'materials'` (supported: `materials`, `generic`)
+- Run the download helper cell to populate local folders:
+  - `data/materials_samples/` → `brick_texture.png`, `coins_metal.png`
+  - `data/generic_samples/` → `astronaut.png`, `camera.png`
+- The loader checks local files first via `LOCAL_DATASET_PATHS` and only falls back to URLs if local files are missing.
+
+Notes:
+- Only `materials` and `generic` dataset types are supported now.
+- The function `load_image_from_medmnist` and all medical/biomedical references have been removed.
+- The image loader prints which source it successfully used for traceability.
+
+### **electricity_consumption_shap.py**
+Python script version of the time-series analysis for automated execution.
+
+### **requirements.txt**
+Complete dependency specification supporting both notebooks:
+- Core data science stack (numpy, pandas, scikit-learn)
+- SHAP ecosystem for traditional ML explanations
+- PyTorch + Captum for deep learning explanations
+- Jupyter and visualization libraries
+
+## Quick Results
 - **Best Model**: Random Forest (96.43% R²)
 - **Key Feature**: `lag_168h` (7 days ago) - 94.77% importance
 - **Strong weekly patterns** in electricity consumption
 
-## 🚀 Running the Analysis
+## Running the Analysis
 
 ### For Full SHAP Analysis (Recommended)
 
@@ -90,7 +139,7 @@ If you can't use the virtual environment, the notebook still provides comprehens
 - Individual prediction breakdowns
 - All the same insights with different explanation methods
 
-## 📦 Environment Setup Options
+## Environment Setup Options
 
 ### Option 1: Use requirements.txt (Recommended for New Setups)
 
@@ -184,7 +233,7 @@ seaborn>=0.12.0,<1.0.0     # Statistical visualizations
 - **SHAP ecosystem** versions tested together for compatibility
 - **Python 3.11-3.13** explicitly supported for full functionality
 
-## ✅ Testing the Environment
+## Testing the Environment
 
 ### Test SHAP functionality:
 ```bash
@@ -199,11 +248,11 @@ jupyter notebook electricity_consumption_shap.ipynb
 ```
 
 You should see:
-- ✅ SHAP working perfectly with full analysis capabilities
-- 📊 Rich visualizations and explanations
-- 🎯 96%+ model accuracy with interpretable predictions
+- SHAP working perfectly with full analysis capabilities
+- Rich visualizations and explanations
+- 96%+ model accuracy with interpretable predictions
 
-## 🧠 SHAP vs Alternative Analysis
+## SHAP vs Alternative Analysis
 
 | **With Virtual Environment** | **Without SHAP (Python 3.14+)** |
 |------------------------------|-----------------------------------|
@@ -213,7 +262,7 @@ You should see:
 | ✅ TreeExplainer for tree models | ✅ Model-specific importance |
 | 🎯 **Recommended for full insights** | 🎯 **Still very comprehensive!** |
 
-## 🆘 Troubleshooting
+## Troubleshooting
 
 ### Environment Issues
 ```bash
