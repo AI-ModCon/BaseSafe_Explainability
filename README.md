@@ -3,12 +3,11 @@
 ## Setup
 
 ```bash
-# Clone or navigate to the project directory
-cd path/to/analysis
+# Navigate to the explainability directory
+cd path/to/code-safe/BaseSafe_Explainability
 
-# Create virtual environment (Python 3.11-3.13 recommended)
-python3.13 -m venv env
-source env/bin/activate  # On Windows: env\Scripts\activate
+# Activate virtual environment (located in parent directory)
+source ../venv/bin/activate  # On Windows: ..\venv\Scripts\activate
 
 # Install dependencies
 pip install -r requirements.txt
