@@ -9,8 +9,8 @@ from PIL import Image
 from torchvision import transforms
 from transformers import AutoImageProcessor, AutoModelForImageClassification
 
-# Add BaseSafe_RedTeaming to path for poisoningaux import
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'BaseSafe_RedTeaming'))
+# Add helpers folder to path for poisoningaux import
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'helpers'))
 
 try:
     from poisoningaux import poison_data, load_model, inference
