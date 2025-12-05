@@ -255,7 +255,11 @@ def save_results_summary(results, output_path):
     Save results summary to a text file.
     
     Args:
-        results (dict): Results dictionary from explain_timeseries_predictions
+        results (dict): Results dictionary with keys:
+                       - 'models': list of model names
+                       - 'training_results': dict of training metrics
+                       - 'shap_results': dict of SHAP statistics
+                       - 'feature_importance': dict of feature importance dataframes
         output_path (str): Path to save summary
         
     Returns:
@@ -267,34 +271,93 @@ def save_results_summary(results, output_path):
             f.write("TIME-SERIES SHAP ANALYSIS RESULTS\n")
             f.write("="*60 + "\n\n")
             
-            for model_name, result in results.items():
-                f.write(f"\n--- {model_name} ---\n")
+            # Check if this is the new format (from notebook) or old format (from explain_timeseries_predictions)
+            # New format has 'models' as a list, old format has model names as top-level keys
+            if 'models' in results and isinstance(results['models'], list):
+                # New format from notebook
+                models = results['models']
+                training_results = results['training_results']
+                shap_results = results.get('shap_results', {})
+                feature_importance = results.get('feature_importance', {})
                 
-                # Metrics
-                metrics = result['metrics']
-                f.write(f"\nPerformance Metrics:\n")
-                f.write(f"  Train MSE: {metrics['train_mse']:.2f}, R²: {metrics['train_r2']:.4f}\n")
-                f.write(f"  Test MSE: {metrics['test_mse']:.2f}, R²: {metrics['test_r2']:.4f}\n")
-                
-                if result.get('shap_values') is not None:
-                    shap_values = result['shap_values']
-                    X_sample = result['X_sample']
+                for model_name in models:
+                    f.write(f"\n--- {model_name} ---\n")
                     
-                    # Feature importance
-                    feature_importance = compute_feature_importance(shap_values, X_sample.columns)
-                    f.write(f"\nTop 10 Most Important Features:\n")
-                    f.write(feature_importance.head(10).to_string(index=False))
-                    f.write("\n")
+                    # Metrics
+                    try:
+                        if model_name in training_results:
+                            metrics = training_results[model_name]['metrics']
+                            f.write(f"\nPerformance Metrics:\n")
+                            f.write(f"  Train MSE: {metrics['train_mse']:.2f}, R²: {metrics['train_r2']:.4f}\n")
+                            f.write(f"  Test MSE: {metrics['test_mse']:.2f}, R²: {metrics['test_r2']:.4f}\n")
+                    except Exception as e:
+                        f.write(f"\nError writing metrics: {e}\n")
                     
                     # SHAP statistics
-                    stats = get_shap_summary_stats(shap_values)
-                    f.write(f"\nSHAP Values Summary:\n")
-                    f.write(f"  Shape: {stats['shape']}\n")
-                    f.write(f"  Mean absolute SHAP value: {stats['mean_abs']:.2f}\n")
-                    f.write(f"  Max SHAP value: {stats['max']:.2f}\n")
-                    f.write(f"  Min SHAP value: {stats['min']:.2f}\n")
-                
-                f.write("\n" + "="*60 + "\n")
+                    try:
+                        if model_name in shap_results:
+                            stats = shap_results[model_name]
+                            f.write(f"\nSHAP Values Summary:\n")
+                            f.write(f"  Shape: {stats['shape']}\n")
+                            f.write(f"  Mean absolute SHAP value: {stats['mean_abs']:.4f}\n")
+                            f.write(f"  Standard deviation: {stats['std']:.4f}\n")
+                    except Exception as e:
+                        f.write(f"\nError writing SHAP stats: {e}\n")
+                    
+                    # Feature importance
+                    try:
+                        if model_name in feature_importance:
+                            feat_imp = feature_importance[model_name]
+                            f.write(f"\nTop 10 Most Important Features:\n")
+                            # Convert dict back to DataFrame if needed
+                            if isinstance(feat_imp, dict):
+                                import pandas as pd
+                                # The dict has 'feature' and 'importance' as keys mapping to lists
+                                feat_df = pd.DataFrame(feat_imp)
+                                if 'feature' in feat_df.columns and 'importance' in feat_df.columns:
+                                    feat_df = feat_df.sort_values('importance', ascending=False)
+                                    for idx in range(min(10, len(feat_df))):
+                                        row = feat_df.iloc[idx]
+                                        f.write(f"  {row['feature']}: {row['importance']:.6f}\n")
+                            else:
+                                f.write(feat_imp.head(10).to_string(index=False))
+                                f.write("\n")
+                    except Exception as e:
+                        f.write(f"\nError writing feature importance: {e}\n")
+                        import traceback
+                        f.write(f"{traceback.format_exc()}\n")
+                    
+                    f.write("\n" + "="*60 + "\n")
+            else:
+                # Old format from explain_timeseries_predictions
+                for model_name, result in results.items():
+                    f.write(f"\n--- {model_name} ---\n")
+                    
+                    # Metrics
+                    metrics = result['metrics']
+                    f.write(f"\nPerformance Metrics:\n")
+                    f.write(f"  Train MSE: {metrics['train_mse']:.2f}, R²: {metrics['train_r2']:.4f}\n")
+                    f.write(f"  Test MSE: {metrics['test_mse']:.2f}, R²: {metrics['test_r2']:.4f}\n")
+                    
+                    if result.get('shap_values') is not None:
+                        shap_values = result['shap_values']
+                        X_sample = result['X_sample']
+                        
+                        # Feature importance
+                        feature_importance_df = compute_feature_importance(shap_values, X_sample.columns)
+                        f.write(f"\nTop 10 Most Important Features:\n")
+                        f.write(feature_importance_df.head(10).to_string(index=False))
+                        f.write("\n")
+                        
+                        # SHAP statistics
+                        stats = get_shap_summary_stats(shap_values)
+                        f.write(f"\nSHAP Values Summary:\n")
+                        f.write(f"  Shape: {stats['shape']}\n")
+                        f.write(f"  Mean absolute SHAP value: {stats['mean_abs']:.2f}\n")
+                        f.write(f"  Max SHAP value: {stats['max']:.2f}\n")
+                        f.write(f"  Min SHAP value: {stats['min']:.2f}\n")
+                    
+                    f.write("\n" + "="*60 + "\n")
         
         return output_path
     except Exception as e:

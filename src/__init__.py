@@ -2,11 +2,11 @@
 BaseSafe Explainability Source Module
 
 Main functions for different types of explainability analysis:
-- image: Image classification explainability using ResNet and Captum
+- images: Image classification explainability using ResNet and Captum
 - timeseries: Time-series prediction explainability using SHAP
 """
 
-from . import image
+from . import images
 from . import timeseries
 
-__all__ = ['image', 'timeseries']
+__all__ = ['images', 'timeseries']

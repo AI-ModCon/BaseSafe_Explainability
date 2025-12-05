@@ -3,4 +3,52 @@ TIME-SERIES SHAP ANALYSIS RESULTS
 ============================================================
 
 
---- models ---
+--- Random Forest ---
+
+Performance Metrics:
+  Train MSE: 797.80, R²: 0.9958
+  Test MSE: 7347.18, R²: 0.9513
+
+SHAP Values Summary:
+  Shape: (20, 29)
+  Mean absolute SHAP value: 12.7825
+  Standard deviation: 62.5232
+
+Top 10 Most Important Features:
+  lag_168h: 300.002080
+  lag_1h: 12.523466
+  rolling_std_12h: 8.445125
+  hour_sin: 7.559077
+  rolling_mean_24h: 4.136200
+  rolling_mean_6h: 3.970088
+  rolling_std_48h: 3.230114
+  temp_squared: 2.729678
+  temp_cooling_degree: 2.531900
+  lag_24h: 2.490514
+
+============================================================
+
+--- Linear Regression ---
+
+Performance Metrics:
+  Train MSE: 2303.51, R²: 0.9880
+  Test MSE: 3169.37, R²: 0.9790
+
+SHAP Values Summary:
+  Shape: (10, 29)
+  Mean absolute SHAP value: 55.3914
+  Standard deviation: 165.9030
+
+Top 10 Most Important Features:
+  rolling_mean_6h: 643.838616
+  rolling_mean_12h: 385.686085
+  temp_squared: 92.502908
+  lag_3h: 89.476169
+  temp_cooling_degree: 80.971318
+  lag_2h: 54.719668
+  temperature: 49.783155
+  is_weekend: 45.890614
+  lag_1h: 43.478767
+  hour_sin: 25.363685
+
+============================================================
