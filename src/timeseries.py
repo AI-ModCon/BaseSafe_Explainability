@@ -1,296 +1,434 @@
 #!/usr/bin/env python3
 """
 Time-Series Electricity Consumption Prediction with SHAP Explanations
-This example demonstrates how to use SHAP to explain predictions from regression models
-trained on time-series electricity consumption data.
+
+This module focuses on explainability functions for time-series models:
+- Training regression models
+- Computing SHAP explanations
+- Visualizing and analyzing SHAP results
+- Individual prediction explanations
+
+Data generation and feature engineering are in helpers/timeseries_data.py
 """
 
 import shap
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.linear_model import LinearRegression
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, r2_score
 import matplotlib.pyplot as plt
-from datetime import datetime, timedelta
+import os
+import sys
 import warnings
 warnings.filterwarnings('ignore')
 
-def generate_synthetic_electricity_data(n_days=365, start_date='2023-01-01'):
-    """
-    Generate synthetic electricity consumption time-series data
-    """
-    print("Generating synthetic electricity consumption data...")
-    
-    # Create date range
-    dates = pd.date_range(start=start_date, periods=n_days*24, freq='H')
-    
-    # Create base consumption pattern
-    np.random.seed(42)
-    
-    # Seasonal patterns
-    day_of_year = dates.dayofyear
-    hour_of_day = dates.hour
-    day_of_week = dates.dayofweek
-    
-    # Base consumption with seasonal trends
-    seasonal_factor = 1 + 0.3 * np.sin(2 * np.pi * day_of_year / 365)  # Yearly seasonality
-    daily_pattern = 0.8 + 0.4 * np.sin(2 * np.pi * hour_of_day / 24)  # Daily pattern
-    weekly_pattern = 1 + 0.1 * np.sin(2 * np.pi * day_of_week / 7)    # Weekly pattern
-    
-    # Temperature effect (synthetic)
-    temp_base = 20 + 10 * np.sin(2 * np.pi * day_of_year / 365) + np.random.normal(0, 3, len(dates))
-    temp_effect = 1 + 0.02 * np.abs(temp_base - 22)  # Higher consumption when temp deviates from 22°C
-    
-    # Economic activity (weekday vs weekend)
-    economic_activity = np.where(day_of_week < 5, 1.2, 0.8)  # Higher on weekdays
-    
-    # Base consumption
-    base_consumption = 1000
-    
-    # Combine all factors
-    consumption = (base_consumption * 
-                  seasonal_factor * 
-                  daily_pattern * 
-                  weekly_pattern * 
-                  temp_effect * 
-                  economic_activity +
-                  np.random.normal(0, 50, len(dates)))  # Add noise
-    
-    # Create DataFrame
-    df = pd.DataFrame({
-        'datetime': dates,
-        'consumption': consumption,
-        'temperature': temp_base,
-        'hour': hour_of_day,
-        'day_of_week': day_of_week,
-        'day_of_year': day_of_year,
-        'month': dates.month,
-        'is_weekend': (day_of_week >= 5).astype(int)
-    })
-    
-    return df
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-def create_time_series_features(df, target_col='consumption', lags=[1, 2, 3, 24, 48, 168]):
-    """
-    Create time-series features including lags, rolling averages, and temporal features
-    """
-    print("Creating time-series features...")
-    
-    df_features = df.copy()
-    
-    # Lag features
-    for lag in lags:
-        df_features[f'lag_{lag}h'] = df[target_col].shift(lag)
-    
-    # Rolling averages
-    for window in [6, 12, 24, 48]:
-        df_features[f'rolling_mean_{window}h'] = df[target_col].rolling(window=window).mean()
-        df_features[f'rolling_std_{window}h'] = df[target_col].rolling(window=window).std()
-    
-    # Temporal features
-    df_features['hour_sin'] = np.sin(2 * np.pi * df_features['hour'] / 24)
-    df_features['hour_cos'] = np.cos(2 * np.pi * df_features['hour'] / 24)
-    df_features['day_of_week_sin'] = np.sin(2 * np.pi * df_features['day_of_week'] / 7)
-    df_features['day_of_week_cos'] = np.cos(2 * np.pi * df_features['day_of_week'] / 7)
-    df_features['month_sin'] = np.sin(2 * np.pi * df_features['month'] / 12)
-    df_features['month_cos'] = np.cos(2 * np.pi * df_features['month'] / 12)
-    
-    # Temperature features
-    df_features['temp_squared'] = df_features['temperature'] ** 2
-    df_features['temp_cooling_degree'] = np.maximum(0, df_features['temperature'] - 22)
-    df_features['temp_heating_degree'] = np.maximum(0, 22 - df_features['temperature'])
-    
-    # Drop rows with NaN values (due to lag/rolling features)
-    df_features = df_features.dropna()
-    
-    return df_features
+# Import data generation and feature engineering helpers
+from helpers.timeseries_data import (
+    generate_synthetic_electricity_data,
+    create_time_series_features,
+    prepare_train_test_split
+)
 
-def train_and_explain_models(df_features, target_col='consumption'):
+# Import model training helpers
+from helpers.model_training import (
+    create_models,
+    train_model
+)
+
+
+def compute_shap_values(model, model_name, X_train, X_test, num_samples=100):
     """
-    Train regression models and create SHAP explanations
+    Compute SHAP values for a trained model.
+    
+    Args:
+        model: Trained sklearn model
+        model_name (str): Name of the model
+        X_train (pd.DataFrame): Training data for background
+        X_test (pd.DataFrame): Test data to explain
+        num_samples (int): Number of test samples to explain
+        
+    Returns:
+        dict: {
+            'explainer': SHAP explainer,
+            'shap_values': numpy array of SHAP values,
+            'X_sample': DataFrame of explained samples
+        } or None on error
     """
-    print("\nTraining regression models...")
+    print(f"  Creating SHAP explainer for {model_name}...")
     
-    # Prepare features and target
-    feature_cols = [col for col in df_features.columns 
-                   if col not in ['datetime', target_col]]
-    
-    X = df_features[feature_cols]
-    y = df_features[target_col]
-    
-    # Split data (preserving temporal order)
-    split_idx = int(len(X) * 0.8)
-    X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
-    y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
-    
-    print(f"Training set size: {len(X_train)}")
-    print(f"Test set size: {len(X_test)}")
-    
-    # Train multiple models
-    models = {
-        'Random Forest': RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1),
-        'Gradient Boosting': GradientBoostingRegressor(n_estimators=100, random_state=42),
-        'Linear Regression': LinearRegression()
-    }
-    
-    results = {}
-    
-    for name, model in models.items():
-        print(f"\nTraining {name}...")
-        
-        # Train model
-        model.fit(X_train, y_train)
-        
-        # Make predictions
-        y_pred_train = model.predict(X_train)
-        y_pred_test = model.predict(X_test)
-        
-        # Calculate metrics
-        train_mse = mean_squared_error(y_train, y_pred_train)
-        test_mse = mean_squared_error(y_test, y_pred_test)
-        train_r2 = r2_score(y_train, y_pred_train)
-        test_r2 = r2_score(y_test, y_pred_test)
-        
-        print(f"  Train MSE: {train_mse:.2f}, R²: {train_r2:.4f}")
-        print(f"  Test MSE: {test_mse:.2f}, R²: {test_r2:.4f}")
-        
-        # Create SHAP explainer
-        print(f"  Creating SHAP explainer for {name}...")
-        
-        if name in ['Random Forest', 'Gradient Boosting']:
+    try:
+        if model_name in ['Random Forest', 'Gradient Boosting']:
             # Use TreeExplainer for tree-based models (faster and more accurate)
             explainer = shap.TreeExplainer(model)
-            # Use a subset for faster computation
-            shap_values = explainer.shap_values(X_test.iloc[:100])
+            sample_size = min(num_samples, len(X_test))
+            shap_values = explainer.shap_values(X_test.iloc[:sample_size])
         else:
             # Use KernelExplainer for other models
             # Use a smaller background dataset for faster computation
-            explainer = shap.KernelExplainer(model.predict, X_train.iloc[:100])
-            shap_values = explainer.shap_values(X_test.iloc[:50])
+            background_size = min(100, len(X_train))
+            explainer = shap.KernelExplainer(model.predict, X_train.iloc[:background_size])
+            sample_size = min(num_samples // 2, len(X_test))  # Smaller for KernelExplainer
+            shap_values = explainer.shap_values(X_test.iloc[:sample_size])
         
-        results[name] = {
-            'model': model,
+        return {
             'explainer': explainer,
             'shap_values': shap_values,
-            'X_test_sample': X_test.iloc[:len(shap_values)],
-            'y_test_sample': y_test.iloc[:len(shap_values)],
-            'metrics': {
-                'train_mse': train_mse,
-                'test_mse': test_mse,
-                'train_r2': train_r2,
-                'test_r2': test_r2
-            }
+            'X_sample': X_test.iloc[:len(shap_values)]
         }
-    
-    return results, X_test, y_test
+    except Exception as e:
+        print(f"  Error computing SHAP values: {e}")
+        return None
 
-def analyze_shap_results(results):
+def compute_feature_importance(shap_values, feature_names):
     """
-    Analyze and display SHAP results
-    """
-    print("\n" + "="*60)
-    print("SHAP ANALYSIS RESULTS")
-    print("="*60)
+    Compute feature importance from SHAP values.
     
-    for model_name, result in results.items():
-        print(f"\n--- {model_name} ---")
+    Args:
+        shap_values (np.ndarray): SHAP values array
+        feature_names (list): List of feature names
         
-        shap_values = result['shap_values']
-        X_sample = result['X_test_sample']
-        
-        # Feature importance (mean absolute SHAP values)
-        feature_importance = pd.DataFrame({
-            'feature': X_sample.columns,
-            'importance': np.mean(np.abs(shap_values), axis=0)
-        }).sort_values('importance', ascending=False)
-        
-        print("\nTop 10 Most Important Features:")
-        print(feature_importance.head(10).to_string(index=False))
-        
-        # Summary statistics
-        print(f"\nSHAP Values Summary:")
-        print(f"  Shape: {shap_values.shape}")
-        print(f"  Mean absolute SHAP value: {np.mean(np.abs(shap_values)):.2f}")
-        print(f"  Max SHAP value: {np.max(shap_values):.2f}")
-        print(f"  Min SHAP value: {np.min(shap_values):.2f}")
+    Returns:
+        pd.DataFrame: Feature importance sorted by importance
+    """
+    feature_importance = pd.DataFrame({
+        'feature': feature_names,
+        'importance': np.mean(np.abs(shap_values), axis=0)
+    }).sort_values('importance', ascending=False)
+    
+    return feature_importance
 
-def demonstrate_predictions_with_explanations(results, model_name='Random Forest'):
+def get_shap_summary_stats(shap_values):
     """
-    Demonstrate individual predictions with SHAP explanations
+    Get summary statistics for SHAP values.
+    
+    Args:
+        shap_values (np.ndarray): SHAP values array
+        
+    Returns:
+        dict: Summary statistics
     """
-    if model_name not in results:
-        print(f"Model {model_name} not found in results")
-        return
-    
-    result = results[model_name]
-    model = result['model']
-    shap_values = result['shap_values']
-    X_sample = result['X_test_sample']
-    y_sample = result['y_test_sample']
-    
-    print(f"\n" + "="*60)
-    print(f"INDIVIDUAL PREDICTION EXPLANATIONS - {model_name}")
-    print("="*60)
-    
-    # Show explanations for first 5 predictions
-    for i in range(min(5, len(shap_values))):
-        actual = y_sample.iloc[i]
-        predicted = model.predict(X_sample.iloc[i:i+1])[0]
-        
-        print(f"\nSample {i+1}:")
-        print(f"  Actual consumption: {actual:.2f} kWh")
-        print(f"  Predicted consumption: {predicted:.2f} kWh")
-        print(f"  Prediction error: {abs(actual - predicted):.2f} kWh")
-        
-        # Get feature contributions for this prediction
-        feature_contributions = pd.DataFrame({
-            'feature': X_sample.columns,
-            'value': X_sample.iloc[i].values,
-            'shap_value': shap_values[i]
-        }).sort_values('shap_value', key=abs, ascending=False)
-        
-        print(f"  Top 5 contributing features:")
-        for j in range(min(5, len(feature_contributions))):
-            row = feature_contributions.iloc[j]
-            direction = "increases" if row['shap_value'] > 0 else "decreases"
-            print(f"    {row['feature']}: {row['value']:.2f} -> {direction} prediction by {abs(row['shap_value']):.2f}")
+    return {
+        'shape': shap_values.shape,
+        'mean_abs': np.mean(np.abs(shap_values)),
+        'max': np.max(shap_values),
+        'min': np.min(shap_values),
+        'std': np.std(shap_values)
+    }
 
-def main():
+def save_shap_summary_plot(shap_values, X_sample, output_path, model_name):
+    """
+    Create and save SHAP summary plot.
+    
+    Args:
+        shap_values (np.ndarray): SHAP values
+        X_sample (pd.DataFrame): Sample data
+        output_path (str): Path to save plot
+        model_name (str): Name of the model
+        
+    Returns:
+        str: Path to saved plot or None on error
+    """
+    try:
+        plt.figure(figsize=(10, 6))
+        shap.summary_plot(shap_values, X_sample, show=False)
+        plt.title(f'SHAP Summary Plot - {model_name}')
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        return output_path
+    except Exception as e:
+        print(f"Error creating SHAP summary plot: {e}")
+        return None
+
+def save_shap_waterfall_plot(explainer, shap_values, X_sample, output_path, sample_idx=0):
+    """
+    Create and save SHAP waterfall plot for a single prediction.
+    
+    Args:
+        explainer: SHAP explainer object
+        shap_values (np.ndarray): SHAP values
+        X_sample (pd.DataFrame): Sample data
+        output_path (str): Path to save plot
+        sample_idx (int): Index of sample to explain
+        
+    Returns:
+        str: Path to saved plot or None on error
+    """
+    try:
+        plt.figure(figsize=(10, 6))
+        
+        # For SHAP v0.40+, use Explanation object
+        if hasattr(shap, 'Explanation'):
+            explanation = shap.Explanation(
+                values=shap_values[sample_idx],
+                base_values=explainer.expected_value if hasattr(explainer, 'expected_value') else np.mean(shap_values),
+                data=X_sample.iloc[sample_idx].values,
+                feature_names=X_sample.columns.tolist()
+            )
+            shap.waterfall_plot(explanation, show=False)
+        else:
+            # Fallback for older SHAP versions
+            shap.waterfall_plot(
+                shap.Explanation(
+                    values=shap_values[sample_idx],
+                    data=X_sample.iloc[sample_idx].values
+                ),
+                show=False
+            )
+        
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        return output_path
+    except Exception as e:
+        print(f"Error creating SHAP waterfall plot: {e}")
+        return None
+
+def save_feature_importance_plot(feature_importance, output_path, top_n=15):
+    """
+    Create and save feature importance bar plot.
+    
+    Args:
+        feature_importance (pd.DataFrame): Feature importance dataframe
+        output_path (str): Path to save plot
+        top_n (int): Number of top features to show
+        
+    Returns:
+        str: Path to saved plot or None on error
+    """
+    try:
+        plt.figure(figsize=(10, 6))
+        top_features = feature_importance.head(top_n)
+        plt.barh(range(len(top_features)), top_features['importance'])
+        plt.yticks(range(len(top_features)), top_features['feature'])
+        plt.xlabel('Mean |SHAP value|')
+        plt.title(f'Top {top_n} Feature Importance')
+        plt.gca().invert_yaxis()
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        return output_path
+    except Exception as e:
+        print(f"Error creating feature importance plot: {e}")
+        return None
+
+def get_prediction_explanation(model, shap_values, X_sample, y_sample, sample_idx=0, top_n=5):
+    """
+    Get explanation for a single prediction.
+    
+    Args:
+        model: Trained model
+        shap_values (np.ndarray): SHAP values
+        X_sample (pd.DataFrame): Sample data
+        y_sample (pd.Series): True values
+        sample_idx (int): Index of sample to explain
+        top_n (int): Number of top features to return
+        
+    Returns:
+        dict: {
+            'actual': actual value,
+            'predicted': predicted value,
+            'error': prediction error,
+            'top_features': DataFrame of top contributing features
+        }
+    """
+    actual = y_sample.iloc[sample_idx]
+    predicted = model.predict(X_sample.iloc[sample_idx:sample_idx+1])[0]
+    
+    # Get feature contributions for this prediction
+    feature_contributions = pd.DataFrame({
+        'feature': X_sample.columns,
+        'value': X_sample.iloc[sample_idx].values,
+        'shap_value': shap_values[sample_idx]
+    }).sort_values('shap_value', key=abs, ascending=False)
+    
+    return {
+        'actual': actual,
+        'predicted': predicted,
+        'error': abs(actual - predicted),
+        'top_features': feature_contributions.head(top_n)
+    }
+
+def save_results_summary(results, output_path):
+    """
+    Save results summary to a text file.
+    
+    Args:
+        results (dict): Results dictionary from explain_timeseries_predictions
+        output_path (str): Path to save summary
+        
+    Returns:
+        str: Path to saved file or None on error
+    """
+    try:
+        with open(output_path, 'w') as f:
+            f.write("="*60 + "\n")
+            f.write("TIME-SERIES SHAP ANALYSIS RESULTS\n")
+            f.write("="*60 + "\n\n")
+            
+            for model_name, result in results.items():
+                f.write(f"\n--- {model_name} ---\n")
+                
+                # Metrics
+                metrics = result['metrics']
+                f.write(f"\nPerformance Metrics:\n")
+                f.write(f"  Train MSE: {metrics['train_mse']:.2f}, R²: {metrics['train_r2']:.4f}\n")
+                f.write(f"  Test MSE: {metrics['test_mse']:.2f}, R²: {metrics['test_r2']:.4f}\n")
+                
+                if result.get('shap_values') is not None:
+                    shap_values = result['shap_values']
+                    X_sample = result['X_sample']
+                    
+                    # Feature importance
+                    feature_importance = compute_feature_importance(shap_values, X_sample.columns)
+                    f.write(f"\nTop 10 Most Important Features:\n")
+                    f.write(feature_importance.head(10).to_string(index=False))
+                    f.write("\n")
+                    
+                    # SHAP statistics
+                    stats = get_shap_summary_stats(shap_values)
+                    f.write(f"\nSHAP Values Summary:\n")
+                    f.write(f"  Shape: {stats['shape']}\n")
+                    f.write(f"  Mean absolute SHAP value: {stats['mean_abs']:.2f}\n")
+                    f.write(f"  Max SHAP value: {stats['max']:.2f}\n")
+                    f.write(f"  Min SHAP value: {stats['min']:.2f}\n")
+                
+                f.write("\n" + "="*60 + "\n")
+        
+        return output_path
+    except Exception as e:
+        print(f"Error saving results summary: {e}")
+        return None
+
+def explain_timeseries_predictions(
+    data_path=None,
+    output_dir='./timeseries_shap_outputs',
+    n_days=365,
+    models=None,
+    num_samples=100,
+    test_size=0.2,
+    target_col='consumption'
+):
+    """
+    Complete workflow: generate/load data, train models, compute SHAP explanations.
+    
+    Args:
+        data_path (str): Path to CSV file with time-series data (None = generate synthetic)
+        output_dir (str): Directory to save outputs
+        n_days (int): Number of days for synthetic data generation
+        models (list): List of model names ['randomforest', 'gradientboosting', 'linear']
+        num_samples (int): Number of test samples to explain
+        test_size (float): Proportion of data for testing
+        target_col (str): Name of target column
+        
+    Returns:
+        dict: Results for each model with trained model, SHAP values, and metrics
+    """
     print("Time-Series Electricity Consumption Prediction with SHAP")
     print("="*60)
     
-    # Generate synthetic data
-    df = generate_synthetic_electricity_data(n_days=365)
-    print(f"Generated {len(df)} hourly electricity consumption records")
+    # Create output directory
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Load or generate data
+    if data_path and os.path.exists(data_path):
+        print(f"Loading data from {data_path}...")
+        df = pd.read_csv(data_path)
+        if 'datetime' in df.columns:
+            df['datetime'] = pd.to_datetime(df['datetime'])
+    else:
+        if data_path:
+            print(f"Warning: {data_path} not found. Generating synthetic data...")
+        df = generate_synthetic_electricity_data(n_days=n_days)
+    
+    print(f"Dataset: {len(df)} hourly electricity consumption records")
     
     # Create time-series features
-    df_features = create_time_series_features(df)
-    print(f"Created dataset with {len(df_features)} samples and {len(df_features.columns)-2} features")
+    df_features = create_time_series_features(df, target_col=target_col)
+    print(f"Features: {len(df_features)} samples with {len(df_features.columns)-2} features")
     
-    # Train models and create explanations
-    results, X_test, y_test = train_and_explain_models(df_features)
+    # Prepare train/test split
+    X_train, X_test, y_train, y_test, feature_cols = prepare_train_test_split(
+        df_features, target_col=target_col, test_size=test_size
+    )
     
-    # Analyze SHAP results
-    analyze_shap_results(results)
+    # Create models
+    model_dict = create_models(models)
+    print(f"\nTraining {len(model_dict)} model(s)...")
     
-    # Demonstrate individual predictions
-    demonstrate_predictions_with_explanations(results, 'Random Forest')
+    # Train models and compute SHAP values
+    results = {}
+    for model_name, model in model_dict.items():
+        # Train model
+        train_result = train_model(model, X_train, y_train, X_test, y_test, model_name)
+        
+        # Compute SHAP values
+        shap_result = compute_shap_values(
+            train_result['model'],
+            model_name,
+            X_train,
+            X_test,
+            num_samples=num_samples
+        )
+        
+        # Combine results
+        results[model_name] = {
+            'model': train_result['model'],
+            'metrics': train_result['metrics'],
+            'y_test': y_test
+        }
+        
+        if shap_result:
+            results[model_name].update({
+                'explainer': shap_result['explainer'],
+                'shap_values': shap_result['shap_values'],
+                'X_sample': shap_result['X_sample'],
+                'y_sample': y_test.iloc[:len(shap_result['shap_values'])]
+            })
+            
+            # Create visualizations
+            model_output_dir = os.path.join(output_dir, model_name.replace(' ', '_').lower())
+            os.makedirs(model_output_dir, exist_ok=True)
+            
+            # Save SHAP summary plot
+            summary_plot_path = os.path.join(model_output_dir, 'shap_summary.png')
+            save_shap_summary_plot(
+                shap_result['shap_values'],
+                shap_result['X_sample'],
+                summary_plot_path,
+                model_name
+            )
+            
+            # Save feature importance plot
+            feature_importance = compute_feature_importance(
+                shap_result['shap_values'],
+                shap_result['X_sample'].columns
+            )
+            importance_plot_path = os.path.join(model_output_dir, 'feature_importance.png')
+            save_feature_importance_plot(feature_importance, importance_plot_path)
+            
+            # Save waterfall plot for first prediction
+            waterfall_plot_path = os.path.join(model_output_dir, 'shap_waterfall_sample_0.png')
+            save_shap_waterfall_plot(
+                shap_result['explainer'],
+                shap_result['shap_values'],
+                shap_result['X_sample'],
+                waterfall_plot_path,
+                sample_idx=0
+            )
+            
+            print(f"  Saved visualizations to {model_output_dir}/")
+    
+    # Save results summary
+    summary_path = os.path.join(output_dir, 'results_summary.txt')
+    save_results_summary(results, summary_path)
+    print(f"\nResults summary saved to {summary_path}")
     
     print(f"\n" + "="*60)
     print("SUMMARY")
     print("="*60)
-    print("✓ Successfully created time-series electricity consumption dataset")
-    print("✓ Engineered temporal features (lags, rolling statistics, cyclical features)")
-    print("✓ Trained multiple regression models")
-    print("✓ Generated SHAP explanations for model predictions")
-    print("✓ Identified key features driving electricity consumption predictions")
-    print("\nKey insights:")
-    print("- Lag features (recent consumption) are typically most important")
-    print("- Temperature-based features significantly impact consumption")
-    print("- Time-of-day and day-of-week patterns are crucial")
-    print("- SHAP helps identify which factors drive high/low consumption predictions")
-
-if __name__ == "__main__":
-    main()
+    print(f"✓ Processed {len(df_features)} time-series samples")
+    print(f"✓ Trained {len(results)} model(s)")
+    print(f"✓ Generated SHAP explanations")
+    print(f"✓ Saved outputs to {output_dir}/")
