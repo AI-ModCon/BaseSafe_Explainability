@@ -50,4 +50,5 @@ var/
 wheels/
 *.egg-info/
 .installed.cfg
-*.egg
+*.eggdata/imagenette2-320.tgz
+data/imagenette2-320/
